@@ -30,7 +30,7 @@ public class AgentService {
 
     @Transactional
     public AgentResponse updateAgentStatus(Long id, UpdateAgentStatusRequest request) {
-        Agent agent = agents.findById(id)
+        Agent agent = agents.findByIdForUpdate(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Agent", id));
         AgentStatus previous = agent.getStatus();
         AgentStatus next = request.status();
