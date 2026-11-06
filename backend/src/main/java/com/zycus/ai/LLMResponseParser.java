@@ -4,80 +4,34 @@ import com.zycus.exception.LlmResponseParseException;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
-
 import java.util.regex.Pattern;
 
 @Component
 public class LLMResponseParser {
+    private final JsonMapper json;
+    private static final Pattern FENCED=Pattern.compile(
+            "^```(?:json)?\\s*([\\s\\S]*?)\\s*```$",Pattern.CASE_INSENSITIVE);
 
-    private static final Pattern MARKDOWN_JSON_BLOCK = Pattern.compile(
-            "^```(?:json)?\\s*([\\s\\S]*?)\\s*```$",
-            Pattern.CASE_INSENSITIVE
-    );
+    public LLMResponseParser(JsonMapper json) {this.json=json;}
 
-    private final JsonMapper jsonMapper;
-
-    public LLMResponseParser(JsonMapper jsonMapper) {
-        this.jsonMapper = jsonMapper;
-    }
-
-    public ParsedLlmRoutingResponse parse(String response) {
-        if (response == null || response.isBlank()) {
-            throw new LlmResponseParseException("LLM response is empty");
-        }
-
-        String normalizedResponse = unwrapMarkdownJson(response.trim());
-
+    public ParsedLlmRoutingResponse parse(String raw) {
+        if(raw==null || raw.isBlank()) throw new LlmResponseParseException("LLM response is empty");
+        var matcher=FENCED.matcher(raw.strip());
+        String normalized=matcher.matches()?matcher.group(1):raw.strip();
         try {
-            JsonNode root = jsonMapper.readTree(normalizedResponse);
-
-            Long recommendedAgent = readRequiredLong(root, "recommendedAgent");
-            Double confidence = readRequiredDouble(root, "confidence");
-            String reasoning = readRequiredText(root, "reasoning");
-
-            return new ParsedLlmRoutingResponse(recommendedAgent, confidence, reasoning);
-        } catch (LlmResponseParseException exception) {
-            throw exception;
-        } catch (Exception exception) {
-            throw new LlmResponseParseException("Failed to parse LLM response as JSON", exception);
-        }
-    }
-
-    private String unwrapMarkdownJson(String response) {
-        var matcher = MARKDOWN_JSON_BLOCK.matcher(response);
-        if (matcher.matches()) {
-            return matcher.group(1).trim();
-        }
-        return response;
-    }
-
-    private Long readRequiredLong(JsonNode root, String fieldName) {
-        JsonNode node = root.get(fieldName);
-        if (node == null || node.isNull()) {
-            throw new LlmResponseParseException("Missing required field: " + fieldName);
-        }
-        if (!node.canConvertToLong()) {
-            throw new LlmResponseParseException("Invalid value for field: " + fieldName);
-        }
-        return node.longValue();
-    }
-
-    private Double readRequiredDouble(JsonNode root, String fieldName) {
-        JsonNode node = root.get(fieldName);
-        if (node == null || node.isNull()) {
-            throw new LlmResponseParseException("Missing required field: " + fieldName);
-        }
-        if (!node.isNumber()) {
-            throw new LlmResponseParseException("Invalid value for field: " + fieldName);
-        }
-        return node.doubleValue();
-    }
-
-    private String readRequiredText(JsonNode root, String fieldName) {
-        JsonNode node = root.get(fieldName);
-        if (node == null || node.isNull() || !node.isTextual() || node.asText().isBlank()) {
-            throw new LlmResponseParseException("Missing required field: " + fieldName);
-        }
-        return node.asText();
+            JsonNode root=json.readTree(normalized);
+            JsonNode agent=root.path("recommendedAgent");
+            JsonNode conf=root.path("confidence");
+            JsonNode reason=root.path("reasoning");
+            if(!agent.canConvertToLong() || agent.longValue()<=0)
+                throw new LlmResponseParseException("Invalid recommendedAgent ID");
+            if(!conf.isNumber() || !Double.isFinite(conf.doubleValue())
+                    || conf.doubleValue()<0 || conf.doubleValue()>1)
+                throw new LlmResponseParseException("Confidence must be between 0 and 1");
+            if(!reason.isTextual() || reason.asText().isBlank() || reason.asText().length()>3000)
+                throw new LlmResponseParseException("Missing or oversized reasoning");
+            return new ParsedLlmRoutingResponse(agent.longValue(),conf.doubleValue(),reason.asText());
+        } catch(LlmResponseParseException ex) {throw ex;}
+        catch(Exception ex) {throw new LlmResponseParseException("Invalid LLM JSON",ex);}
     }
 }

@@ -1,39 +1,42 @@
 package com.zycus.controller;
 
-import com.zycus.dto.CreateOrderRequest;
-import com.zycus.dto.OrderResponse;
+import com.zycus.dto.*;
 import com.zycus.entity.OrderStatus;
+import com.zycus.entity.TriggerReason;
+import com.zycus.exception.NoAvailableAgentException;
+import com.zycus.mapper.SuggestionMapper;
 import com.zycus.service.OrderService;
+import com.zycus.service.RecommendationService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.ResponseStatus;
-import org.springframework.web.bind.annotation.RestController;
-
+import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 @RestController
 @RequestMapping("/orders")
 public class OrderController {
-
-    private final OrderService orderService;
-
-    public OrderController(OrderService orderService) {
-        this.orderService = orderService;
+    private final OrderService orders;
+    private final RecommendationService recommendations;
+    private final SuggestionMapper suggestions;
+    public OrderController(OrderService orders,RecommendationService recommendations,SuggestionMapper suggestions) {
+        this.orders=orders;this.recommendations=recommendations;this.suggestions=suggestions;
     }
 
     @GetMapping
-    public List<OrderResponse> getOrders(@RequestParam(required = false) OrderStatus status) {
-        return orderService.getOrders(status);
+    public List<OrderResponse> list(@RequestParam(required=false) OrderStatus status) {
+        return orders.getOrders(status);
     }
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public OrderResponse createOrder(@Valid @RequestBody CreateOrderRequest request) {
-        return orderService.createOrder(request);
+    public OrderResponse create(@Valid @RequestBody CreateOrderRequest request) {
+        return orders.createOrder(request);
+    }
+
+    @PostMapping("/{id}/suggest")
+    public SuggestionResponse suggest(@PathVariable Long id) {
+        var result=recommendations.generateRecommendation(id,TriggerReason.INITIAL);
+        if(result==null) throw new NoAvailableAgentException();
+        return suggestions.toResponse(result);
     }
 }

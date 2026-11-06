@@ -1,12 +1,9 @@
 package com.zycus.service;
 
 import com.zycus.dto.RoutingResult;
-import com.zycus.entity.Agent;
-import com.zycus.entity.AgentStatus;
-import com.zycus.entity.Order;
-import com.zycus.entity.ReassignmentSuggestion;
-import com.zycus.entity.SuggestionStatus;
-import com.zycus.entity.TriggerReason;
+import com.zycus.entity.*;
+import com.zycus.exception.InvalidSuggestionException;
+import com.zycus.exception.NoAvailableAgentException;
 import com.zycus.exception.ResourceNotFoundException;
 import com.zycus.repository.AgentRepository;
 import com.zycus.repository.OrderRepository;
@@ -15,69 +12,65 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
 import java.util.List;
 
-/**
- * Orchestrates recommendation generation by loading domain data, delegating
- * routing decisions to {@link RoutingService}, and persisting pending suggestions.
- */
+/** Serializes decisions for an order using a row-level lock; returns existing pending suggestion. */
 @Service
-@Transactional
 public class RecommendationService {
+    private static final Logger log=LoggerFactory.getLogger(RecommendationService.class);
+    private final OrderRepository orders;
+    private final AgentRepository agents;
+    private final ReassignmentSuggestionRepository suggestions;
+    private final RoutingService routing;
 
-    private static final Logger log = LoggerFactory.getLogger(RecommendationService.class);
-
-    private final OrderRepository orderRepository;
-    private final AgentRepository agentRepository;
-    private final ReassignmentSuggestionRepository suggestionRepository;
-    private final RoutingService routingService;
-
-    public RecommendationService(
-            OrderRepository orderRepository,
-            AgentRepository agentRepository,
-            ReassignmentSuggestionRepository suggestionRepository,
-            RoutingService routingService
-    ) {
-        this.orderRepository = orderRepository;
-        this.agentRepository = agentRepository;
-        this.suggestionRepository = suggestionRepository;
-        this.routingService = routingService;
+    public RecommendationService(OrderRepository orders,AgentRepository agents,
+            ReassignmentSuggestionRepository suggestions,RoutingService routing) {
+        this.orders=orders;this.agents=agents;this.suggestions=suggestions;this.routing=routing;
     }
 
-    public void generateRecommendation(Long orderId, TriggerReason triggerReason) {
-        Order order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new ResourceNotFoundException("Order", orderId));
-
-        if (suggestionRepository.findFirstByOrderIdAndStatusAndTriggerReason(
-                orderId,
-                SuggestionStatus.PENDING,
-                triggerReason
-        ).isPresent()) {
-            log.info("Pending suggestion already exists for order {}. Skipping recommendation generation.", orderId);
-            return;
+    @Transactional
+    public ReassignmentSuggestion generateRecommendation(Long orderId, TriggerReason trigger) {
+        Order order=orders.findByIdForUpdate(orderId)
+                .orElseThrow(() -> new ResourceNotFoundException("Order",orderId));
+        if (order.getStatus()==OrderStatus.DELIVERED ||
+                order.getStatus()==OrderStatus.REASSIGNED) {
+            throw new InvalidSuggestionException("Order is not eligible for reassignment");
         }
-
-        List<Agent> availableAgents = agentRepository.findByStatus(AgentStatus.AVAILABLE);
-        if (availableAgents.isEmpty()) {
-            log.warn("No available agents found for order {}. Skipping recommendation.", orderId);
-            return;
+        if (trigger==TriggerReason.AGENT_OFFLINE &&
+                order.getAssignedAgent().getStatus()!=AgentStatus.OFFLINE) {
+            return null; // Agent returned online before async handler executed.
         }
+        var existing=suggestions.findFirstByOrderIdAndStatus(orderId,SuggestionStatus.PENDING);
+        if (existing.isPresent()) return existing.get();
 
-        RoutingResult routingResult = routingService.suggest(
-                order,
-                availableAgents,
-                triggerReason
-        );
-
-        ReassignmentSuggestion suggestion = new ReassignmentSuggestion();
+        if (trigger==TriggerReason.AGENT_OFFLINE && order.getStatus()!=OrderStatus.REASSIGNMENT_PENDING) {
+            order.setStatus(OrderStatus.REASSIGNMENT_PENDING);
+            orders.save(order);
+        }
+        List<Agent> eligible=agents.findByStatus(AgentStatus.AVAILABLE).stream()
+                .filter(agent -> !agent.getId().equals(order.getAssignedAgent().getId()))
+                .toList();
+        if (eligible.isEmpty()) {
+            if (trigger==TriggerReason.AGENT_OFFLINE) {
+                log.warn("Order {} stranded; no replacement available",orderId);
+                return null; // Pending order remains visible; ops can retry later.
+            }
+            throw new NoAvailableAgentException();
+        }
+        RoutingResult result=routing.suggest(order,eligible,trigger);
+        if (result.recommendedAgent()==null ||
+                eligible.stream().noneMatch(a->a.getId().equals(result.recommendedAgent().getId()))) {
+            throw new InvalidSuggestionException("Strategy recommended an ineligible agent");
+        }
+        ReassignmentSuggestion suggestion=new ReassignmentSuggestion();
         suggestion.setOrder(order);
-        suggestion.setRecommendedAgent(routingResult.recommendedAgent());
-        suggestion.setConfidence(routingResult.confidence());
-        suggestion.setReasoning(routingResult.reasoning());
+        suggestion.setRecommendedAgent(result.recommendedAgent());
         suggestion.setStatus(SuggestionStatus.PENDING);
-        suggestion.setTriggerReason(triggerReason);
-
-        suggestionRepository.save(suggestion);
+        suggestion.setTriggerReason(trigger);
+        suggestion.setReasoning(result.reasoning());
+        suggestion.setConfidence(result.confidence());
+        suggestion.setStrategyUsed(result.strategyUsed());
+        suggestion.setFallbackUsed(result.fallbackUsed());
+        return suggestions.save(suggestion);
     }
 }

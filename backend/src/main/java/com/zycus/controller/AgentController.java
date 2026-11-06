@@ -4,27 +4,20 @@ import com.zycus.dto.AgentResponse;
 import com.zycus.dto.UpdateAgentStatusRequest;
 import com.zycus.service.AgentService;
 import jakarta.validation.Valid;
-import org.springframework.web.bind.annotation.PatchMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
+import java.util.List;
 
 @RestController
 @RequestMapping("/agents")
 public class AgentController {
+    private final AgentService agents;
+    public AgentController(AgentService agents) {this.agents=agents;}
 
-    private final AgentService agentService;
-
-    public AgentController(AgentService agentService) {
-        this.agentService = agentService;
-    }
+    @GetMapping
+    public List<AgentResponse> list() {return agents.getAgents();}
 
     @PatchMapping("/{id}/status")
-    public AgentResponse updateAgentStatus(
-            @PathVariable Long id,
-            @Valid @RequestBody UpdateAgentStatusRequest request
-    ) {
-        return agentService.updateAgentStatus(id, request);
+    public AgentResponse status(@PathVariable Long id, @Valid @RequestBody UpdateAgentStatusRequest request) {
+        return agents.updateAgentStatus(id,request);
     }
 }
