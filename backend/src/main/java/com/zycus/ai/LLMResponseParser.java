@@ -10,7 +10,7 @@ import java.util.regex.Pattern;
 public class LLMResponseParser {
     private final JsonMapper json;
     private static final Pattern FENCED=Pattern.compile(
-            "^\x60\x60\x60(?:json)?\\s*([\\s\\S]*?)\\s*\x60\x60\x60$",Pattern.CASE_INSENSITIVE);
+            "^```(?:json)?\\s*([\\s\\S]*?)\\s*```$",Pattern.CASE_INSENSITIVE);
 
     public LLMResponseParser(JsonMapper json) {this.json=json;}
 
