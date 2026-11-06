@@ -29,7 +29,7 @@ ready()
 agents = call(API + "/agents")
 orders = call(API + "/orders")
 assert len(agents) >= 5 and len(orders) >= 8, (len(agents), len(orders))
-original = agents[0]
+original = next(a for a in agents if a["name"] == "Priya Sharma")
 assert original["status"] == "BUSY"
 assigned = [o for o in orders if o["assignedAgentId"] == original["id"]]
 assert assigned, "Expected seeded orders assigned to the first agent"
