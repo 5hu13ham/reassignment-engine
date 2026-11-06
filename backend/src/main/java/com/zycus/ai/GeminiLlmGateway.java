@@ -9,108 +9,52 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
-
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
 @Component
 public class GeminiLlmGateway implements LLMGateway {
+    private final RestClient http;
+    private final JsonMapper json;
+    private final String key;
+    private final String url;
 
-    private final RestClient restClient;
-    private final JsonMapper jsonMapper;
-    private final String apiKey;
-    private final String generateContentUrl;
-
-    public GeminiLlmGateway(
-            JsonMapper jsonMapper,
-            @Value("${llm.base-url}") String baseUrl,
-            @Value("${llm.model}") String model,
-            @Value("${llm.api-key}") String apiKey,
-            @Value("${llm.timeout-ms:30000}") long timeoutMs
-    ) {
-        this.jsonMapper = jsonMapper;
-        this.apiKey = apiKey;
-        this.generateContentUrl = "%s/v1beta/models/%s:generateContent".formatted(
-                trimTrailingSlash(baseUrl),
-                model
-        );
-        this.restClient = RestClient.builder()
-                .requestFactory(createRequestFactory(timeoutMs))
-                .build();
+    public GeminiLlmGateway(JsonMapper json,@Value("${llm.base-url:https://generativelanguage.googleapis.com}") String baseUrl,
+            @Value("${llm.model:gemini-flash-latest}") String model,
+            @Value("${llm.api-key:}") String key,
+            @Value("${llm.timeout-ms:10000}") long timeoutMs) {
+        this.json=json;this.key=key;
+        this.url=baseUrl.replaceAll("/+$","")+"/v1beta/models/"+model+":generateContent";
+        var factory=new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(Duration.ofMillis(timeoutMs));
+        factory.setReadTimeout(Duration.ofMillis(timeoutMs));
+        this.http=RestClient.builder().requestFactory(factory).build();
     }
 
     @Override
     public String generate(String prompt) {
-        Map<String, Object> requestBody = Map.of(
-                "contents", List.of(
-                        Map.of(
-                                "role", "user",
-                                "parts", List.of(
-                                        Map.of("text", prompt)
-                                )
-                        )
-                ),
-                "generationConfig", Map.of(
-                        "responseMimeType", "application/json",
-                        "temperature", 0.2
-                )
-        );
-
+        if(key==null || key.isBlank())
+            throw new LlmGatewayException("Gemini API key not configured (rule-based fallback is available)");
         try {
-            String responseBody = restClient.post()
-                    .uri(generateContentUrl + "?key=" + apiKey)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(requestBody)
-                    .retrieve()
-                    .body(String.class);
-
-            return extractGeneratedText(responseBody);
-        } catch (ResourceAccessException exception) {
-            throw new LlmGatewayException("LLM request timed out or failed to connect", exception);
-        } catch (RestClientResponseException exception) {
-            throw new LlmGatewayException(
-                    "LLM request failed with status " + exception.getStatusCode().value(),
-                    exception
-            );
-        } catch (LlmGatewayException exception) {
-            throw exception;
-        } catch (Exception exception) {
-            throw new LlmGatewayException("Unexpected LLM gateway failure", exception);
+            Map<String,Object> body=Map.of(
+                    "contents",List.of(Map.of("role","user","parts",List.of(Map.of("text",prompt)))),
+                    "generationConfig",Map.of("responseMimeType","application/json","temperature",0.2));
+            String response=http.post().uri(url).header("x-goog-api-key",key)
+                    .contentType(MediaType.APPLICATION_JSON).body(body).retrieve().body(String.class);
+            JsonNode text=json.readTree(response).path("candidates").path(0)
+                    .path("content").path("parts").path(0).path("text");
+            if(text.isMissingNode() || text.asText().isBlank())
+                throw new LlmGatewayException("Gemini produced no text");
+            return text.asText();
+        } catch(ResourceAccessException ex) {
+            throw new LlmGatewayException("Gemini timeout or connection failure",ex);
+        } catch(RestClientResponseException ex) {
+            throw new LlmGatewayException("Gemini returned HTTP "+ex.getStatusCode().value(),ex);
+        } catch(LlmGatewayException ex) {
+            throw ex;
+        } catch(Exception ex) {
+            throw new LlmGatewayException("Gemini response could not be parsed",ex);
         }
-    }
-
-    private String extractGeneratedText(String responseBody) {
-        try {
-            JsonNode root = jsonMapper.readTree(responseBody);
-            JsonNode textNode = root.path("candidates")
-                    .path(0)
-                    .path("content")
-                    .path("parts")
-                    .path(0)
-                    .path("text");
-
-            if (textNode.isMissingNode() || textNode.asText().isBlank()) {
-                throw new LlmGatewayException("LLM response did not contain generated text");
-            }
-
-            return textNode.asText();
-        } catch (LlmGatewayException exception) {
-            throw exception;
-        } catch (Exception exception) {
-            throw new LlmGatewayException("Failed to read LLM response payload", exception);
-        }
-    }
-
-    private org.springframework.http.client.SimpleClientHttpRequestFactory createRequestFactory(long timeoutMs) {
-        org.springframework.http.client.SimpleClientHttpRequestFactory requestFactory =
-                new org.springframework.http.client.SimpleClientHttpRequestFactory();
-        requestFactory.setConnectTimeout(Duration.ofMillis(timeoutMs));
-        requestFactory.setReadTimeout(Duration.ofMillis(timeoutMs));
-        return requestFactory;
-    }
-
-    private String trimTrailingSlash(String baseUrl) {
-        return baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
     }
 }
