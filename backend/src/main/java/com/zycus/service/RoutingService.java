@@ -10,6 +10,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
+import java.util.function.Function;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Service
@@ -18,10 +20,11 @@ public class RoutingService {
     private final Map<String,RoutingStrategy> strategies;
     private final AtomicReference<String> selected;
 
-    public RoutingService(Map<String,RoutingStrategy> strategies,
+    public RoutingService(List<RoutingStrategy> registered,
                           @Value("${routing.strategy:rule}") String initialStrategy) {
-        this.strategies=strategies;
-        if(!strategies.containsKey(initialStrategy) || !strategies.containsKey("rule")) {
+        this.strategies=registered.stream().collect(Collectors.toUnmodifiableMap(
+                RoutingStrategy::strategyKey, Function.identity()));
+        if(!this.strategies.containsKey(initialStrategy) || !this.strategies.containsKey("rule")) {
             throw new IllegalStateException("Missing routing strategy: "+initialStrategy);
         }
         selected=new AtomicReference<>(initialStrategy);

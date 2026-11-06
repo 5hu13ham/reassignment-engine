@@ -6,7 +6,6 @@ import com.zycus.service.RoutingService;
 import com.zycus.strategy.*;
 import org.junit.jupiter.api.Test;
 import java.util.List;
-import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 
 class RoutingStrategyUnitTest {
@@ -31,7 +30,7 @@ class RoutingStrategyUnitTest {
                 throw new IllegalStateException("Offline AI");
             }
         };
-        RoutingService service=new RoutingService(Map.of("rule",rule,"ai",ai),"rule");
+        RoutingService service=new RoutingService(List.of(rule,ai),"rule");
         assertEquals("ai",service.setActiveStrategy("ai"));
         Agent agent=new Agent();agent.setId(4L);agent.setStatus(AgentStatus.AVAILABLE);agent.setActiveOrderCount(0);
         Order order=new Order();order.setId(9L);
