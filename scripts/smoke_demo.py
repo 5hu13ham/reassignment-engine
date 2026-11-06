@@ -13,7 +13,7 @@ def call(url, method="GET", payload=None):
     headers = {"Content-Type": "application/json"} if data is not None else {}
     with urlopen(Request(url, data=data, headers=headers, method=method), timeout=10) as response:
         raw = response.read()
-        return json.loads(raw) if raw and response.headers.get("Content-Type", "").startswith("application/json") else raw
+        return json.loads(raw) if raw and "json" in response.headers.get("Content-Type", "").lower() else raw
 
 def ready():
     for _ in range(65):
