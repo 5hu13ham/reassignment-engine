@@ -34,3 +34,20 @@ jobs:
           node-version: "22"
       - run: npm install --no-audit --no-fund
       - run: npm run build
+
+  docker-smoke:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build local demonstration stack
+        run: docker compose up --build -d
+      - name: Validate API, UI and automatic approval flow
+        run: python3 scripts/smoke_demo.py
+      - name: Show service logs on failure
+        if: failure()
+        run: docker compose logs --tail=120
+      - name: Stop containers
+        if: always()
+        run: docker compose down -v
