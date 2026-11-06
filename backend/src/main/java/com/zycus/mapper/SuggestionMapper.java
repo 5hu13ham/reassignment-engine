@@ -6,16 +6,10 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class SuggestionMapper {
-
-    public SuggestionResponse toResponse(ReassignmentSuggestion suggestion) {
+    public SuggestionResponse toResponse(ReassignmentSuggestion s) {
         return new SuggestionResponse(
-                suggestion.getId(),
-                suggestion.getOrder().getId(),
-                suggestion.getRecommendedAgent().getId(),
-                suggestion.getConfidence(),
-                suggestion.getReasoning(),
-                suggestion.getStatus(),
-                suggestion.getTriggerReason()
-        );
+                s.getId(), s.getOrder().getId(), s.getRecommendedAgent().getId(),
+                s.getConfidence(), s.getReasoning(), s.getStatus(), s.getTriggerReason(),
+                s.getStrategyUsed(), s.isFallbackUsed());
     }
 }
